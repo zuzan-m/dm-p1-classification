@@ -1,0 +1,1181 @@
+\documentclass{article}
+
+\usepackage{float}
+\usepackage{array}
+\usepackage{braket}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{amsfonts}
+\usepackage{hyperref}
+\usepackage{mathtools}
+\usepackage[T1]{fontenc}
+\usepackage[cp1250]{inputenc}
+\usepackage[left=2.5cm,right=2.5cm,bottom=2cm,top=2cm]{geometry}
+\setlength\parindent{0pt}
+
+<<ustawienia_globalne, echo=FALSE, warning=FALSE, eval=T, message=FALSE>>=
+library(plyr)
+library(klaR)
+library(MASS)
+library(ROCR)
+library(DMwR)
+library(class)
+library(ipred)
+library(party)
+library(knitr)
+library(rpart)
+library(caret)
+library(plot3D)
+library(xtable)
+library(Boruta)
+library(ggplot2)
+library(corrplot)
+library(latex2exp)
+library(gridExtra)
+library(rpart.plot)
+library(RColorBrewer)
+library(DataExplorer)
+library(randomForest)
+opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H')
+#library(tidyverse)
+#library(leaps)
+@
+
+\begin{document}
+
+{\centering
+{\scshape\Large Data Mining \par}
+\vspace{0.3cm}
+{\Large Course project \par}
+\vspace{0.5cm}
+{\Large Marta Kawalko (229955), Zuzanna Materny (229932)\par}
+\vspace{1.5cm}
+{\LARGE\bfseries Application of data mining techniques \\on {\itshape Breast Cancer Wisconsin} data set \par}
+\vspace{3cm}}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introduction}
+The project goal is to use data mining methods to perform complete analysis of selected data. At the same time we will familiarize with the real problem thoroughly.\\
+\\
+Breast cancer is one of the most common cancers women are facing. More than every tenth woman have suffered from the disease. Many types of breast cancer are not difficult to diagnose, but we have to be constantly under the guidance of a doctor. A breast self-examination (BSE) is one of the most important techniques that need to be fulfilled by each woman, at least once in two months time starting at the age of 18. Such manner may stop cancer from spreading and allows to recognize the first signs of the disease. \\
+\\
+In the project we will analyze breast cancer data obtained from the University of Wisconsin Hospitals ([\ref{dataset}]). The data was collected in the years 1989-1991 and contains the following information:
+
+\begin{center}
+\begin{tabular}{r l l}
+
+     & Attribute                    & Domain\\\hline
+   1.& Sample code number           & id number\\
+   2.& Clump Thickness              & 1 - 10\\
+   3.& Uniformity of Cell Size      & 1 - 10\\
+   4.& Uniformity of Cell Shape     & 1 - 10\\
+   5.& Marginal Adhesion            & 1 - 10\\
+   6.& Single Epithelial Cell Size  & 1 - 10\\
+   7.& Bare Nuclei                  & 1 - 10\\
+   8.& Bland Chromatin              & 1 - 10\\
+   9.& Normal Nucleoli              & 1 - 10\\
+  10.& Mitoses                      & 1 - 10\\
+  11.& Class:                       & (2 for benign, 4 for malignant)
+
+\end{tabular}
+\end{center}
+
+<<echo=F, eval=T>>=
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/breast-cancer-wisconsin.data"
+download.file(url=url, destfile="wdbc.data", method="curl")
+df <- read.csv("wdbc.data", header=FALSE, stringsAsFactors=FALSE)
+colnames(df) <- c('id', 'Clump.Thickness', 'Uniformity.of.Cell.Size', 'Uniformity.of.Cell.Shape', 'Marginal.Adhesion', 'Single.Epithelial.Cell.Size', 'Bare.Nuclei', 'Bland.Chromatin', 'Normal.Nucleoli', 'Mitoses', 'Class')
+#str(df)
+@
+
+\section{Preliminary data processing}
+Before performing analysis we need to prepare and clean the data so the way it is stored in our data frame is both correct and convenient for analyzing.
+
+\subsection{Reading and understanding the data}
+To make sure we analyze the data properly, we have to make sure to understand all the information included in the dataset. At first sight it seems that most of the variables are categorical qualitative and ordinal. The values of variables are natural numbers from $1$ to $10$ and the class of cancer is showing values from the set $\{2, 4\}$, which tells us if the cancer is benign or malignant. The smaller the values of those variables are, the closer the cancer is to being benign. Only the first variable in the set -- code number -- is the unique identificator of diagnosed woman. This feature is not useful in out analysis, because it is the identifier-type feature and we are not going to check the objective women one by one or analyse their conditions individually. In the dataset there is no other reduntant feature and all the values are from the fixed set. As mentioned before the variables are cathegorical qualitative and ordinal, we should make sure they are coded as factors in R. But this approach limits our possibilities and ways to analyze the dataset so we will treat the variables also as numeric being very careful at the same time.
+\newpage
+\subsection{Handling missing values}
+We have noticed $16$ missing values of the variable \texttt{Bare.Nuclei} coded as "?". It stands for $2,3\%$ of all entries. They are situated randomly among other records and the remaining attributes have diverse values, thus there is no need to inspect them with special attention and we decided to just remove those cases. Our final dataset contains 683 observations of 10 variables.
+
+<<echo=F, eval=T>>=
+#unique(df$Bare.Nuclei)
+df[df$Bare.Nuclei=='?', "Bare.Nuclei"] = NA
+df <- subset(df, select = -c(id))  # remove id column
+df <- colwise(as.integer)(df)   # musialam dodac as integer najpierw, bo od razu as.factor konwertowalo w dziwnej kolejnosci
+df <- colwise(as.factor)(df)  
+#df$Bare.Nuclei = as.integer(df$Bare.Nuclei)
+df$Class = as.factor(ifelse(df$Class == 2, 'Benign', 'Malignant'))
+#str(df)
+df <- df[complete.cases(df),]
+@
+
+\subsection{Identification and interpretation of outliers}
+As all the values are natural numbers from $1$ to $10$ and there are no inconsistencies in the dataset.
+
+<<echo=F, eval=T, fig.height=4, fig.width=4.5>>=
+par(mfrow=c(1,1), oma = c(1,2,0,0) + 0.1,
+          mar = c(1,1,2,1) + 0.1)
+counts <- table(df[,10])
+barplot(counts, main=paste('Barplot of', colnames(df)[10]), cex.main=0.8, cex.names=0.8, col="lightskyblue3",border=F)
+@
+The first barplot tells us a lot about the malignancy of the cancer among the examined women. The benign cancer is more popular but $35\%$ of women suffer from more dangerous cancer -- malignant.\\
+\\
+One of the first signs of breast cancer a woman can feel herself is the clump itself. The thicker it is, the easier it is to feel, so the clump thickness is very important information.\\
+\\
+The values of thickness are quite varied. The boxplot below does not reveal any outliers.\\
+
+<<echo=F, eval=T, fig.height=8>>=
+par(mfrow=c(3,2), oma = c(1,2,0,0) + 0.1,
+          mar = c(2,1,2,1) + 0.1)
+for (i in 1:3){
+  counts <- table(df[,i])
+  barplot(counts, main=paste('Barplot of', colnames(df)[i]), col="lightskyblue3",border=F)
+  boxplot(as.integer(df[,i]), main=paste('Boxplot of', colnames(df)[i]),frame=F)
+}
+@
+
+Let's have a look at the uniformity of cell shape and size. Those two variables have similar barplots and deepening of one of those two features seems to be correlated with with the upgrowth of the second one, but we will check the correlation in the next section. The median of the values is much smaller than the mean, because the most of the uniformity cell shapes and sized is classified as $1$. There are no outliers for those two variables.
+\newpage
+
+<<echo=F, eval=T, fig.height=3>>=
+par(mfrow=c(1,2), oma = c(1,2,0,0) + 0.1,
+          mar = c(2,1,2,1) + 0.1)
+for (i in 6){
+  counts <- table(df[,i])
+  barplot(counts, main=paste('Barplot of', colnames(df)[i]), col="lightskyblue3",border=F)
+  boxplot(as.integer(df[,i]), main=paste('Boxplot of', colnames(df)[i]),frame=F)
+}
+@
+
+The bare nuclei variable distribution looks similar to the feature describing the uniformity of the cells. The correlation between those will be discusses in the following sections.\\
+
+<<echo=F, eval=T, fig.height=3>>=
+par(mfrow=c(1,2), oma = c(1,2,0,0) + 0.1,
+          mar = c(2,1,2,1) + 0.1)
+for (i in 9){
+  counts <- table(df[,i])
+  barplot(counts, main=paste('Barplot of', colnames(df)[i]), col="lightskyblue3",border=F)
+  boxplot(as.integer(df[,i]), main=paste('Boxplot of', colnames(df)[i]),frame=F)
+}
+@
+
+Mitoses is the most critical variable in case of outliers. This is due to the large number of values $1$ along with just a few values of the other qualities of mitoses - a special type of cell division that results in two daughter cells each having the same kind and number of chromosomes as the parent nucleus. It means that the cell division at the high level is not very popular among the examined women.
+<<echo=F, eval=T, fig.height=8>>=
+par(mfrow=c(4,2), oma = c(1,2,0,0) + 0.1,
+          mar = c(2,1,2,1) + 0.1)
+for (i in c(4,5,7,8)){
+  counts <- table(df[,i])
+  barplot(counts, main=paste('Barplot of', colnames(df)[i]), col="lightskyblue3",border=F)
+  boxplot(as.integer(df[,i]), main=paste('Boxplot of', colnames(df)[i]),frame=F)
+}
+@
+All the plots above present distribution of values for each variable. Most of them are concentrated around $1$ and each of them is on average smaller than $5$. For many features boxplots indicate outstanding values. In this medical case we cannot infer that they are errors. They probably correspond to some symptoms of ilness. If we check the people who got at least one score of $10$, we will see that $204$ of them (97,6\%) have a malignant tumor. Just to remind, in the whole data frame we have $239$ malignant cases. 
+\newpage
+<<echo=T, eval=T>>=
+table(df[apply(df, 1, function(row) any(row == 10)), 'Class'])
+@
+Thus, in the further analysis we should keep in mind that big, outstanding values are crucial for the classification.
+
+
+
+\section{Exploratory data analysis}
+
+In order to perform classification more efficiently it is necessary to know as much as possible about the features' properties. The basic information and the distribution of each variable separately was presented in the previous section. Now we will focus on the relationships between the features.\\
+\\
+One of the things we can check is a correlation between all the variables describing the stage of the cancer signs --- not the cancer itself, so all the variables except \texttt{Class}.\\
+
+<<echo=F, eval=T, fig.height=5>>=
+correlation.matrix <- cor(colwise(as.integer)(df[,-10]))
+corrplot(correlation.matrix, type="upper", method='circle', tl.srt=60, 
+         addCoef.col = "black", number.cex = 0.5, col=brewer.pal(n=8, name="RdYlBu"), 
+         tl.col = 'black', tl.cex = 0.8)
+@
+
+If two variables are highly correlated, we can omit one of them while building, for example, linear regression model. However, since many of the variables take the value $1$ the most often, the correlation does not provide strongly relevant information. We will not rely on it in the further classification analysis, but we will check whether it improves our models. \\
+\\
+The biggest correlation can be noticed between \texttt{Uniformity.of.Cell.Shape} and \texttt{Uniformity.of.Cell.Size} and is equal to 0.91. Variable \texttt{Mitoses} has the lowest correlation with the others.\\
+\\
+Also, it is good to know whether any of the attributes has a discriminating ability. We inspect that visually using barplots.
+
+<<echo=F, eval=T, fig.height=10>>=
+df[,'Counter'] = 1
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,1], Class=df$Class), FUN=length)
+p1 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[1])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[1]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,2], Class=df$Class), FUN=length)
+p2 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[2])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[2]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,3], Class=df$Class), FUN=length)
+p3 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[3])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[3]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,4], Class=df$Class), FUN=length)
+p4 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[4])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[4]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,5], Class=df$Class), FUN=length)
+p5 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[5])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[5]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,6], Class=df$Class), FUN=length)
+p6 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[6])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[6]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,7], Class=df$Class), FUN=length)
+p7 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[7])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[7]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,8], Class=df$Class), FUN=length)
+p8 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[8])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[8]))+
+  theme(axis.title=element_text(size=9))
+
+grouped_df <- aggregate(df[,'Counter'], by=list(df[,9], Class=df$Class), FUN=length)
+p9 <- ggplot(grouped_df, aes(Group.1, x)) +
+  geom_bar(aes(fill = Class), width=0.8,
+    stat = "identity", position = position_dodge2(width = 0.9, preserve = "single")) +
+  theme_minimal() +
+  scale_fill_manual("legend", values = c("lightskyblue", "deepskyblue4")) +
+  xlab(paste(colnames(df)[9])) + ylab('') + ggtitle(paste('Barplot of',colnames(df)[9]))+
+  theme(axis.title=element_text(size=9))
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol=2, nrow=5)
+@
+
+Clear division is not visible in any of the variables, although in general small values stand for benign cancer, while extremely big indicate almost always malignant one. It is also supported by measures of central tendency --- mean and median.
+
+<<echo=F, eval=T>>=
+options(xtable.timestamp = "")
+df_mean <- aggregate(colwise(as.integer)(df[,1:9]), by=list(df$Class), FUN=mean)
+df_median <- aggregate(colwise(as.integer)(df[,1:9]), by=list(df$Class), FUN=median)
+@
+<<means, echo = FALSE, results = 'asis'>>=  
+colnames(df_mean)[1] <- 'Class'
+print(xtable(df_mean[1:5], digits=2), include.rownames=FALSE)
+
+print(xtable(df_mean[c(1,6:10)], digits=2, caption=paste0("\\textbf{Mean of the variables with respect to Class}")), include.rownames=FALSE)
+@
+
+<<medians, echo = FALSE, results = 'asis'>>=  
+colnames(df_median)[1] <- 'Class'
+print(xtable(df_median[1:5], digits=2), include.rownames=FALSE, table.placement="H")
+
+print(xtable(df_median[c(1,6:10)], digits=2, caption=paste0("\\textbf{Median of the variables with respect to Class}")), include.rownames=FALSE, table.placement="H")
+@
+
+Only \texttt{Mitoses} behaves differently. Most of the malignant cancers takes here value $1$. But we should also remember that the cell division process does not necessarly mean that the cancer is progressing, mitoses at a high level can albo be noticed for a healthy person and at a low level can be observed for burdened with a tumor.\\
+
+
+<<mitoses, echo = FALSE, results = 'asis'>>= 
+print(xtable(table(df$Mitoses, df$Class)), include.rownames=TRUE)
+@
+\bigskip
+We remember that transformations may change important data characteristics. But as we look at out data set, we can see the set of values for all the features (except for the class) is the same and is not very divergent. We can only consider more advanced transformations like feature selection or feature aggregation, which we take care of in the next chapter. At the moment we can say that our set has a good data quality.
+
+\section{Classification}
+
+We will carry out the classification to check the models and predict our qualitative variables --- classify the malignancy of tumor. In our case we have a binary classification task, because there are only two options: benign and malignant. Our goal is to construct a decision rule $G(\underline{x})$ which for any observation $\underline{x} \in \mathcal{X}$ will assign membership to one of the classes from the set $\mathcal{G}$. Based on the training set we will try to recognize the the relationship between the variables and use this knowledge to predict the further values.
+
+\subsection{Feature selection}
+
+As we have learnt during the laboratiories, the selection of features can be achieved in two ways: One is to rank features according to some criterion and select the top $k$ features, and the other is to select a minimum subset of features without learning performance deterioration. In other words, subset selection algorithms can automatically determine the number of selected features, while feature ranking algorithms need to rely on some given threshold to select features.\\
+\\
+In our work we will try both ways to be sure that the chosen variables present the best data set to draw the correct conclusions and not to omit the important information.\\
+\\
+We will split the data into the training and testing set. We will stick to this split throughout the whole feature selection analysis and then classification.
+
+<<echo=F, eval=T, message=F, warning=F>>=
+set.seed(143)
+df$Counter <- NULL
+df_num <- data.frame(df)
+df_num$Class = ifelse(df_num$Class == 'Benign', 0, 1) 
+df_num <- colwise(as.integer)(df_num)   # numerical df
+sample_size <- floor(0.7 * nrow(df))
+train_ind <- sample(seq_len(nrow(df)), size = sample_size)
+train <- df[train_ind, ]           # categorical case
+test <- df[-train_ind, ]
+train_num <- df_num[train_ind, ]   # numerical case
+test_num <- df_num[-train_ind, ]
+@
+
+\subsubsection{Boruta}
+The first method we apply to our data is Boruta, a wrapper method built around the random forest classification algorithm. It creates shadow attributes that help decide which of them are important. If the real attributes have the importance much lower than the shadow attributes, then they are considered irrelevant. As the result we will see if the variables are Important, Tentative or Rejected. 
+
+<<echo=F, eval=T, message=F, warning=F, fig.height=6>>=
+boruta <- Boruta(Class ~ ., data = train, doTrace = 2, maxRuns = 200)
+plot(boruta, las = 2, cex.axis = 0.6, xlab=" ", main="Variable importance as a result of Boruta algorithm") 
+@
+\newpage
+That's a very surprising result. The Boruta algorithm returned the information that all 9 variables are considered important! All the green boxplots corresponding to our variables are higher than blue boxplots (shadow attributes). Of course their importance differ and \texttt{Bare.Nuclei} is considered the most important, while \texttt{Mitoses} has the lowest value of importance. But still, all 9 features are said to be relevant.
+
+<<echo=T, eval=T>>=
+getSelectedAttributes(boruta)
+@
+
+\subsubsection{Random Forest method with conditional inference trees}
+For this method we will use \texttt{cforest} function from \texttt{party} package based on recursive partitioning. As we have only 9 variables, we will take 3 as number of input variables randomly sampled as candidates at each node of the tree in forest. Our forest will contain 20 trees. Different colours were chosen for the clearness of the output.
+
+<<echo=F, eval=T, message=F, warning=F, fig.height=5>>=
+forrest_choice <- cforest(Class ~ ., data = train, control = cforest_unbiased(mtry=3, ntree=20)) 
+var_imp <- varimp(forrest_choice)
+var_sort <- sort(var_imp, decreasing = F)
+plot(var_sort, xlab=" ", ylab="Importance", col=c("#346ae7", "#e7348d"), cex.lab=1, pch=19)
+text(var_sort, names(var_sort), cex=0.7, pos=c(3,3,3,1,3,3,3,3,2), col=c("#346ae7", "#e7348d")) 
+@
+
+As the result of the method we can see that \texttt{Uniformity.Of.Cell.Size} characterizes the biggest importance. For Boruta algirthm this variable has the second highest value of importance so we can be sure that this is defnitely a relevant feature. On the other hand, \texttt{Mitoses}, which was also at the bottom of Boruta importance hierarchy, is distinguished by the low relative importance.\\
+\\
+If we consider the sum of importance of all the variables, the part of it intended for \texttt{Mitoses} and \texttt{Marginal.Adhesion} are very low and equal:
+
+<<echo=F, eval=T, message=F, warning=F>>=
+var_sort[[1]]/sum(var_sort)
+var_sort[[2]]/sum(var_sort)
+@
+which is definitely very low.
+
+\subsubsection{Breiman's random forest algorithm}
+We will consider \texttt{randomForest} function from \texttt{randomForest} package.
+
+<<echo=F, eval=T, message=F, warning=F, fig.height=5>>=
+rf <- randomForest(Class~., data = train, importance=T)
+varImpPlot(rf, cex=0.7, pch=19, col = rep(c("#deac1d", "#a7d93c", "#13c341"), each = 3, times = 1), main = "Variable importance")
+@
+
+Once again, both \texttt{Mitoses} and \texttt{Marginal.Adhesion} resulted being the least important. \texttt{Bare.Nuclei} for the second time showed its importance. Also two variables describing the unformity of the cell are relevant. We have mixed feeling to the remaining features as being classified differently for both mean decrease in accuracy and mean decrease in impurity calculated using Gini index.
+
+\subsubsection{Stepwise feature selection}
+As the last method, we will perform a stepwise feature selection using function \texttt{stepAIC()} from \texttt{MASS} package based on linear regression model. The function begins with null or full model and in each step it respectively adds the most significant feature or removes the least significant one, looking for minimum value of Akaike Information Criterion. Of course, here we need to treat our data as numerical. The summary of full model is as follows:
+
+<<echo=T, eval=T>>=
+linear.model1 <- lm(Class ~ ., data = train_num)
+@
+<<summary_lm, echo = FALSE, results = 'asis'>>=  
+print(xtable(summary(linear.model1), caption = 'Summary of a full model constructed with lm function.'), table.placement="H")
+@
+
+<<echo=F, eval=T>>=
+linear.model2 <- lm(Class ~ 1, data = train_num)
+#stepAIC(linear.model1,direction="backward")
+#stepAIC(linear.model2,direction="forward", scope=list(upper=linear.model1,lower=linear.model2))
+#stepAIC(linear.model2,direction="both", scope=list(upper=linear.model1,lower=linear.model2))
+# commented not to be compiled in pdf
+@
+
+This summary already suggest very little importance of \texttt{Single.Epithelial.Cell.Size} and using backward, forward and both-sides selection only confirms that. This method does not necessarily mean to improve the model performance, but it is used to simplify the model without impacting much on the performance and loosing important information. Also the second highest p-value can be noticed for \texttt{Uniformity.of.Cell.Shape} and it is probably the reason of very strong correlation between the shape and size of cell uniformity which is equal to 0.91. It confirms our assumptions that we can omit one of those two variables.\\
+\\
+In package \texttt{klaR} we can find another interesting function, \texttt{stepclass()}. It is used for forward/backward variable selection for classification using any specified classification function. We will check its results for LDA and QDA methods using forward direction. We set stop criterion if improvement is less than 0.1\%
+
+<<echo=T, eval=F>>=
+lda.selection <- stepclass(Class ~ ., data=train_num, method="lda", 
+                           direction="forward", improvement=0.001)
+qda.selection <- stepclass(Class ~ ., data=train_num, method="qda", 
+                           direction="forward", improvement=0.001)
+@
+
+The first function returns the following variables (in importance order):\\
+\texttt{Bare.Nuclei}, \texttt{Uniformity.of.Cell.Size} and \texttt{Clump.Thickness}.\\
+The second function returns:\\
+\texttt{Uniformity.of.Cell.Size}, \texttt{Bare.Nuclei}, \texttt{Clump.Thickness} and \texttt{Uniformity.of.Cell.Shape}.\\
+As we can see, they differ a little bit for each method. However, \texttt{Bare.Nuclei} and \texttt{Uniformity.of.Cell.Size} have again the biggest importance.\\
+\\
+Another algorithm worth looking at is recursive feature elimination (\texttt{rfe()} function). In other words it is called backwards feature selection. We can find it in \texttt{caret} package.
+After a proper ranking, the less relevant predictors are eliminated prior to modeling.
+
+<<echo=F, eval=T, message=F, warning=F, fig.height=3.5>>=
+rfe_control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+rfe_features <- rfe(train[,-ncol(train)], train$Class, sizes=c(1:(ncol(train)-1)), rfeControl=rfe_control)
+plot(rfe_features, type=c("g", "o"), col="#26408b", cex=1.5)
+@
+The plot shows that selecting only four variables is enough to get very high accuracy.
+
+<<echo=F, eval=T>>=
+rfe_features
+@
+<<rfe, echo = FALSE, results = 'asis' >>=
+#print(xtable(rfe_features[[3]]), table.placement="H")
+#cat(predictors(rfe_features)[1:5])
+@
+
+We can see that te function returns the list of 5 variables that most influences the model. The top is taken by \texttt{Bare.Nuclei} and \texttt{Uniformity.of.Cell.Size} again.\\
+\\
+One feature marked with a star was eliminated using this algorithm. It is not a surprise that this feature is \texttt{Mitoses}, which we've expected to be the least relevant for quite some time.
+
+\subsubsection{Feature selection conclusion}
+We have checked multiple methods of feature selection. While Boruta and Stepwise told us exactly which features to treat as important, other methods provided the ranking of variables.
+Our dataset contains 9 variables, which is not a lot. However, all approaches to feature selection stated that \texttt{Mitoses} is the least relevant one. Moreover, \texttt{Marginal.Adhesion} showed disappointing values of importance related to other features. Also \texttt{Uniformity.of.Cell.Shape} is strongly correlated with \texttt{Uniformity.of.Cell.Size}, so removing it will not deteriorate the model significantly. The remaining features of breast cancer were located in different positions when it comes to importance. In our further actions we will check the classification accuracy for a couple of sets --- the complete one consisting of 9 variables and the others consisting of a few selected variables, which are the best for particular model.
+
+\subsection{Dealing with class imbalance problem}
+As noticed before, there is a slight class imbalance in our data set. The majority of examined women suffer from the benign cancer. Only $35\%$ of women had to cope with malignant one. We could deal with that problem using \texttt{SMOTE} function from \texttt{DMwR} package.
+
+<<echo=T, eval=T>>=
+balanced.train <- SMOTE(Class ~., data = train, perc.over = 250, 
+                        perc.under = 150)
+@
+<<echo=F, eval=T>>=
+#train <- balanced.train
+#balanced.train_num <- colwise(as.integer)(balanced.train)
+#train_num <- balanced.train_num
+@
+The new balanced data set is divided into classes equally:
+<<echo=F, eval=T>>=
+table(balanced.train$Class)
+@
+We have tested the equally divided data set. There was no huge improvement in the classification results. As we mentioned before, the imbalance problem for our dataset is not a glaring issue and we are able to answer all the questions stated at the beginning without balancing the data set. Moreover, the number of informations we do have for malignant cancer is fairly sufficient, so let's have a look at the further classification analysis.
+
+\subsection{Linear regression model}
+
+First of all, we will try to build a linear regression model. The prediction of the dependent variable $Y$, which is a type of cancer in our case, is given by the formula:
+
+$$\hat{Y} = \underline{X}^T \underline{\hat{\beta}},$$
+
+where $\underline{X}^T = (1, X_1, ..., X_p)$, $\underline{\hat{\beta}} = (\hat{\beta_0}, \hat{\beta_1}, ..., \hat{\beta_p})^T$ and $p$ is a number of independent variables. \\
+\\
+The least squares method solution to estimate unknown coefficients is given by:
+
+$$\underline{\hat{\beta}} = (\mathbb{X}^T \mathbb{X})^{-1} \,\mathbb{X}^T \underline{y},$$
+
+where $\mathbb{X}_{n \times (p+1)}$ is a model matrix and $\underline{y} = (y_1, y_2, ..., y_n)^T$ is a vector containing dependent variable $(y_i \in \{0, 1\})$.\\
+\\
+Since we are not dealing with continuous data, we have to code our classes as \texttt{Benign} = 0, \texttt{Malignant} = 1 and set a classification rule
+
+\begin{equation}
+  \hat{G} = \begin{cases}
+    \text{Benign}, & \text{if } \hat{Y} \leq 0.5\\
+    \text{Malignant}, & \text{if } \hat{Y} > 0.5
+  \end{cases}
+\end{equation}
+\\
+\\
+
+We will compare the performance of a full model and a model basing on all variables except for \texttt{Mitoses}, \texttt{Uniformity.of.Cell.Shape} and \texttt{Marginal.Adhesion}. 
+
+<<echo=T, eval=T>>=
+lm.all <- lm(Class ~ ., train_num)
+pred.all <- ifelse(predict(lm.all, test_num) > 0.5, 1, 0)
+@
+<<echo=F, eval=T>>=
+conf.matrix <- table(test_num$Class, pred.all)
+misclass.all.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+
+The remaining models are built similarly.
+Let us consider the whole dataset at a starting point. The confusion matrix looks like this:
+
+<<lm_results, echo = FALSE, results = 'asis'>>=
+print(xtable(conf.matrix), table.placement = 'H')
+@
+while
+<<lm_results_error, echo = FALSE, results = 'asis'>>=
+cat(misclass.all.error)
+@
+is the misclassification error.
+
+<<echo=T, eval=T>>=
+lm.sel8 <- lm(Class ~ . - Mitoses, train_num)
+pred.sel8 <- ifelse(predict(lm.sel8, test_num) > 0.5, 1, 0)
+@
+<<echo=F, eval=T>>=
+conf.matrix8 <- table(test_num$Class, pred.sel8)
+misclass.sel.error8 <- (nrow(test_num) - sum(diag(conf.matrix8))) / nrow(test_num)
+@
+After removing \texttt{Mitoses} the confusion matrix is following:
+<<lm_results8, echo = FALSE, results = 'asis'>>=
+xtable(conf.matrix8)
+@
+and 
+<<lm_results_error8, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error8)
+@
+is the value of error.
+
+<<echo=T, eval=T>>=
+lm.sel7 <- lm(Class ~ . - Mitoses - Marginal.Adhesion, train_num)
+pred.sel7 <- ifelse(predict(lm.sel7, test_num) > 0.5, 1, 0)
+@
+<<echo=F, eval=T>>=
+conf.matrix7 <- table(test_num$Class, pred.sel7)
+misclass.sel.error7 <- (nrow(test_num) - sum(diag(conf.matrix7))) / nrow(test_num)
+@
+
+Getting rid of \texttt{Marginal.Adhesion} additionally, resulted in the value
+<<lm_results_error7, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error7)
+@
+of misclassification error, so it has not even changed. It means that we can remove those two variables and sleep peacefully after that. The confusion matrix is presented below.
+<<lm_results7, echo = FALSE, results = 'asis'>>=
+xtable(conf.matrix7)
+@
+
+
+<<echo=T, eval=T>>=
+lm.sel6 <- lm(Class ~ . - Mitoses - Marginal.Adhesion - Uniformity.of.Cell.Shape, train_num)
+pred.sel6 <- ifelse(predict(lm.sel6, test_num) > 0.5, 1, 0)
+@
+<<echo=F, eval=T>>=
+conf.matrix6 <- table(test_num$Class, pred.sel6)
+misclass.sel.error6 <- (nrow(test_num) - sum(diag(conf.matrix6))) / nrow(test_num)
+@
+
+For the independent variables set containing 6 variables (\texttt{Mitoses}, \texttt{Marginal.Adhesion}, \texttt{Uniformity.of.Cell.Shape} excluded), the confusion matrix is shown below:
+<<lm_results6, echo = FALSE, results = 'asis'>>=
+print(xtable(conf.matrix6), table.placement = 'H')
+@
+The misclassification error is then
+<<lm_results_error6, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error6)
+@
+and it is also the same.\\
+\\
+We will stop here, since removing another feature decreases the accuracy.\\
+\\
+After this quick revision of a few selected models we can see that the prediction model can be simplified by decreasing number of component features even by three, keeping the same goodness of fit. For this particular division into train and test sets the misclassification error is about 3.9\%. We will check whether different algorithms give better results.
+
+
+\subsection{$k$ nearest neighbours algorithm}
+
+$k$-NN algorithm is a simple supervised machine learning algorithm used to solve classification problems. It is based on a distance between two points. For this case we will assume that we can measure the distance between two values as in Euclidean space.
+
+Analogously to regression problem, we have classes $0$ and $1$, the same classification rule, but the prediction formula is as follows:
+
+$$ \hat{Y}(\underline{x}) = \frac{1}{k} \sum_{\underline{x_i} \in N_k(\underline{x})} y_i, $$
+
+where $N_k(\underline{x})$ is $k$ nearest neighbours for observation $\underline{x}$ in the training set. \\
+\\
+In order to select the optimal $k$ parameter, we check the misclassification error for a range of its values.
+
+<<echo=F, eval=T, fig.height=3, warning=FALSE>>=
+misclass.error.range <- c()
+for (k in 1:20){
+  knn.all <- knn(train_num[,-10], test_num[,-10], as.factor(train_num$Class), k=k)
+  conf.matrix <- table(knn.all, test_num$Class)
+  misclass.error.range[k] <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+}
+plot(misclass.error.range, main='Misclassification curve for test data', xlab='k', ylab='misclassification error', type='b', col = "#a63d40", cex=1.2)
+@
+
+The smallest error is obtained for $k=5$ ($\pm 1$ for this dataset division), so we will use this value for further models comparison. Again we will build a full model and then a few simpler ones.
+
+<<echo=T,eval=T>>=
+knn.all <- ipredknn(Class ~ ., data=train_num, k=5)
+pred.all <- predict(knn.all, test_num, type="class")
+@
+<<echo=F,eval=T>>=
+conf.matrix <- table(test_num$Class, pred.all)
+@
+
+Let's have a look at the confusion matrix and misclassification error:
+<<conf_knn, echo = FALSE, results = 'asis'>>=
+cat(misclass.all.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num))
+print(xtable(conf.matrix), table.placement = 'H')
+@
+
+The following two models presented are different. The first one contains $7$ variables (the whole data set excluding \texttt{Mitoses} and \texttt{Marginal.Adhesion}) and the second one consists of only $4$ variables suggested in previous part of the analysis:
+\texttt{Bare.Nuclei}, \texttt{Clump.Thickness}, \texttt{Uniformity.of.Cell.Size} and \texttt{Uniformity.of.Cell.Shape}.
+
+<<echo=T,eval=T>>=
+# for 7 selected features
+knn.sel7 <- ipredknn(Class ~ . - Mitoses - Marginal.Adhesion, data=train_num, k=5)
+@
+
+<<echo=F,eval=T>>=
+pred.sel7 <- predict(knn.sel7, test_num, type="class")
+conf.matrix7 <- table(test_num$Class, pred.sel7)
+@
+
+The misclassification error:
+<<conf_knn7, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error7 <- (nrow(test_num) - sum(diag(conf.matrix7))) / nrow(test_num))
+print(xtable(conf.matrix7), table.placement = 'H')
+@
+
+<<echo=T,eval=T>>=
+# for 4 selected features
+knn.sel <- ipredknn(Class ~ Bare.Nuclei + Clump.Thickness + Uniformity.of.Cell.Size 
+                    +  Uniformity.of.Cell.Shape, data=train_num, k=5)
+@
+<<echo=F,eval=T>>=
+pred.sel <- predict(knn.sel, test_num, type="class")
+conf.matrix <- table(test_num$Class, pred.sel)
+@
+The misclassification error:
+<<conf_knn4, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num))
+print(xtable(conf.matrix), table.placement = 'H')
+@
+
+Excluding \texttt{Mitoses} and \texttt{Marginal.Adhesion} from $k$-NN analysis has not increased the number of misclassified observations. However, this approach gives different results for each repetition (due to the random order of selecting points in the algorithm), although the $k$-NN model consisting of only 4 variables still gives better result than the best linear regression model.\\
+\\
+If we take a look at the decision boundaries for all pairs of variables for a model containing only \texttt{Bare.Nuclei}, \texttt{Clump.Thickness}, \texttt{Uniformity.of.Cell.Size} and \texttt{Uniformity.of.Cell.Shape}, we cannot see any nice boundary. Thus, it is consistent with our preliminary analysis, that it is very hard to talk about any discriminating ability among our single attributes.
+
+<<echo=F, eval=T, fig.height=5, warning=F>>=
+partimat(as.factor(Class) ~ Bare.Nuclei + Clump.Thickness + Uniformity.of.Cell.Size + Uniformity.of.Cell.Shape, data = test_num, method = "sknn",  plot.matrix = FALSE, imageplot = TRUE)
+@
+
+\bigskip
+\subsection{Linear Discriminant Analysis}
+
+LDA approach bases on the assumption of multivariate normality and homogeneity of variance/covariance. It is used in general for datasets with continuous independent variables and categorical dependent variable, so again we will treat our data as numeric. The decision rule construction starts with considering log-odds ratio. In such a case the boundaries of decision regions are linear. For binary classification problem, if the number of observations in each class is equal, classification based on the LDA is equivalent linear regression classification. It is not satisfied for our dataset, thus we will prepare new models using \texttt{lda()} function from \texttt{MASS} package and compare the results. 
+
+
+<<echo=T, eval=T>>=
+lda.all <- lda(Class ~ ., data=train_num)
+@
+
+<<echo=F,eval=T>>=
+pred.all <- predict(lda.all, test_num)$class
+conf.matrix <- table(test_num$Class, pred.all)
+misclass.all.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification:
+<<conf_lda, echo = FALSE, results = 'asis'>>=
+cat(misclass.all.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+<<echo=T, eval=T>>=
+# for 3 selected features according to forward selection
+lda.sel <- lda(Class ~ Clump.Thickness + Uniformity.of.Cell.Size + 
+                 Bare.Nuclei, data=train_num)
+@
+<<echo=F,eval=T>>=
+pred.sel <- predict(lda.sel, test_num)$class
+conf.matrix <- table(test_num$Class, pred.sel)
+misclass.sel.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification:
+<<conf_lda2, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+For a given training/testing dataset division the full LDA model returns similar matrix to the full regression model. The second proposed model consists of only three features, which were chosen in the previous section as the most important. Here we got two less misclassified observations, which means that we managed to simplify much the model and not loose any important information, and even boost its performance. Of course we keep in mind that it also depends on the training and testing set division and cross validation might give more reliable results.
+
+
+\subsection{Quadratic Discriminant Analysis}
+QDA is generalized version of LDA, where the assumption of equal variance/covariance matrices is not needed. Again we will analyze full model and the model with variables selected according to forward stepwise analysis from previous section.
+
+<<echo=T, eval=T>>=
+qda.all <- qda(Class ~ ., data=train_num)
+@
+<<echo=F,eval=T>>=
+pred.all <- predict(qda.all, test_num)$class
+conf.matrix <- table(test_num$Class, pred.all)
+misclass.all.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification error:
+<<conf_qda, echo = FALSE, results = 'asis'>>=
+cat(misclass.all.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+<<echo=T, eval=T>>=
+# for 4 selected features according to forward selection
+qda.sel <- qda(Class ~ Clump.Thickness + Uniformity.of.Cell.Size + 
+                 Uniformity.of.Cell.Shape + Bare.Nuclei, data=train_num)
+@
+<<echo=F,eval=T>>=
+pred.sel <- predict(qda.sel, test_num)$class
+conf.matrix <- table(test_num$Class, pred.sel)
+misclass.sel.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification error:
+<<conf_qda2, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+
+We managed to build much simpler classification model keeping the accuracy at a very high level. Comparing to LDA, QDA performed here much better.
+
+
+\subsection{Logistic regression}
+
+We will use function \texttt{glm} from \texttt{stats} package to perform logistic regression. Independent variables are treated as numeric. Since the classes are coded as 0 and 1, we can easily transform our prediction response (posterior probability) into predicted classes by comparing the probability with a given cutoff level. We will assign the observation with response larger than 0.5 to class 1 and the rest to class 0.
+
+<<echo=T, eval=T>>=
+logit.all <- glm(Class ~ ., data=train_num, family=binomial(link="logit"))
+pred.all <- ifelse(predict(logit.all, test_num, type = "response") > 0.5, 1, 0)
+@
+<<echo=F, eval=T>>=
+conf.matrix <- table(test_num$Class, pred.all)
+misclass.all.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification error:
+<<conf_log, echo = FALSE, results = 'asis'>>=
+cat(misclass.all.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+<<echo=T, eval=T>>=
+# for 4 selected features 
+logit.sel <- glm(Class ~ Bare.Nuclei + Clump.Thickness + 
+                   Uniformity.of.Cell.Size + Uniformity.of.Cell.Shape, data=train_num, 
+                   family=binomial(link="logit"))
+@
+<<echo=F, eval=T>>=
+pred.sel <- ifelse(predict(logit.sel, test_num, type = "response") > 0.5, 1, 0)
+conf.matrix <- table(test_num$Class, pred.sel)
+misclass.sel.error <- (nrow(test_num) - sum(diag(conf.matrix))) / nrow(test_num)
+@
+The misclassification error:
+<<conf_log2, echo = FALSE, results = 'asis'>>=
+cat(misclass.sel.error)
+print(xtable(conf.matrix), table.placement = 'H')
+@
+
+Again four variables, \texttt{Bare.Nuclei}, \texttt{Clump.Thickness}, \texttt{Uniformity.of.Cell.Size}, \texttt{Uniformity.of.Cell.Shape} were sufficient to construct a good classification model. Accuracy is comparable with $k$-NN method's one and better than LDA's one (probably because it imposes fewer assumptions on data).
+
+\subsection{Classification tree}
+We are going to use a binary tree model on our dataset. Based on selected attributes' values, we will split the data into partitions. The function \texttt{rpart} from \texttt{rpart} package will do the job. In case of decision trees we do not need to specify most important variables manually --- the algorithm does it on its own. So we start with building a complex tree and then we prune it choosing optimal \texttt{cp} parameter. Let's now have a look at the tree below. In accordance with our first though that smaller values of features indicates the benign cancer, that's how the splits are made.
+
+<<echo=F, eval=T, fig.height=5>>=
+tree <- rpart(Class ~ ., data=train, cp=.01, minsplit=5, maxdepth=20)
+#rpart.plot(tree, main="Classification Tree - the whole dataset Breast Cancer")
+#printcp(tree)
+tree.pruned <- prune(tree, cp=0.017857)
+rpart.plot(tree.pruned, main="Pruned Classification Tree - the whole dataset Breast Cancer", cex.main=0.9)
+pred.all <- predict(tree.pruned, test, type='class')
+conf.matrix <- table(test$Class, pred.all)
+@
+
+The confusion matrix for class prediction is following:
+<<echo = FALSE, results = 'asis'>>=
+print(xtable(conf.matrix), table.placement = 'H')
+@
+
+One binary tree is so far the worst classifier for our Breast Cancer data. But let's now get ready for the better version of it --- the forest consisting of many trees.
+
+
+\subsection{Random forest}
+Random forest based on Breiman's random forest algorithm is one of the ensemble methods. They are based on averaging or majority voting. So the ensemble-based classification is defined as the combined (or aggregated) classification, which makes decisions based on the components. The results are more reliable as based on many components, not just one. Random forest shows excellent results comparable with the best-known classifiers. It does not overfit. Random forest can also handle the variable selection, but we've digged through it in feature selection section. For our analysis we will compare forests containing different number of trees. \\
+\\
+For $6$ trees in our forest the results are following:
+
+<<echo=T, eval=T>>=
+p <-  ncol(train) - 1
+rf1 <- randomForest(Class~., data=train, ntree=6, mtry=round(sqrt(p)), importance=TRUE)
+@
+<<echo=F, eval=T>>=
+# predicted class labels
+pred.labels <- predict(rf1, newdata=test, type="class")
+real.labels <- test$Class
+confusion.matrix_rf1 <- table(pred.labels, real.labels)
+@
+<<rf1, echo = FALSE, results = 'asis'>>=
+print(xtable(confusion.matrix_rf1), table.placement = 'H')
+@
+On the other hand, for $120$ trees we obtain:
+<<echo=T, eval=T>>=
+p <-  ncol(train) - 1
+rf2 <- randomForest(Class~., data=train, ntree=120, mtry=round(sqrt(p)), importance=TRUE)
+@
+<<echo=F, eval=T>>=
+# predicted class labels
+pred.labels <- predict(rf2, newdata=test, type="class")
+real.labels <- test$Class
+confusion.matrix_rf2 <- table(pred.labels, real.labels)
+@
+<<rf2, echo = FALSE, results = 'asis'>>=
+print(xtable(confusion.matrix_rf2), table.placement = 'H')
+@
+Is it possible to get a better accuracy? Let's have a look at the forest containing $700$ trees:
+<<echo=T, eval=T>>=
+p <-  ncol(train) - 1
+rf3 <- randomForest(Class~., data=train, ntree=700, mtry=round(sqrt(p)), importance=TRUE)
+@
+<<echo=F, eval=T>>=
+# predicted class labels
+pred.labels <- predict(rf3, newdata=test, type="class")
+real.labels <- test$Class
+confusion.matrix_rf3 <- table(pred.labels, real.labels)
+@
+<<rf3, echo = FALSE, results = 'asis'>>=
+print(xtable(confusion.matrix_rf3), table.placement = 'H')
+@
+As we can see, $120$ already forms a good random forest. Even $6$ trees gave much better results than $1$ single tree.
+
+\section{Deeper analysis of selected methods}
+
+In this part we will take a closer look on the models which gave the best results in the previous section. We will perform a 5-fold cross validation (on a shuffled data frame) to avoid the consequences of dependence on training subset selection, and inspect a few more accuracy measures.\\
+\\
+We will skip the feature selection process in each iteration and set, in advance, the most important variables, basing on our past experiance. Three models will be compared:
+\begin{itemize}
+\item full model, 9 independent variables,
+\item simplified model built on 7 independent variables (all except for \texttt{Mitoses} and \texttt{Marginal.Adhesion})
+\item simplified model built on 3 independent variables (\texttt{Bare.Nuclei}, \texttt{Clump.Thickness} and \texttt{Uniformity.of.Cell.Size})
+\end{itemize}
+
+\subsection{$k$ nearest neighbours}
+
+Firstly, we will compare average misclassification error, sensitivity, specificity and precision for all three mentioned above models.
+
+<<echo=F, eval=T, results = 'asis'>>=
+df_num <- df_num[sample(1:nrow(df_num), nrow(df_num)),]
+rownames(df_num) <- NULL   # shuffled df of integer type
+
+# folds for 5-fold cross validation
+k <- 5
+folds <- cut(seq(1,nrow(df_num)), breaks=k, labels=FALSE)
+
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for all features
+  knn.all <- ipredknn(Class ~ ., data=train.set, k=5)
+  pred.all <- predict(knn.all, test.set, type="class")
+  conf.matrix <- table(test.set$Class, pred.all)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for full model.', digits=c(0,4,5)), table.placement = 'H')
+
+
+# for 7 selected features
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for selected features
+  knn.sel <- ipredknn(Class ~ . - Mitoses - Marginal.Adhesion,
+                        data=train.set, k=5)
+  pred.sel <- predict(knn.sel, test.set, type="class")
+  conf.matrix <- table(test.set$Class, pred.sel)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for simplified model (7 variables.', digits=c(0,4,5)), table.placement = 'H')
+
+
+# for 3 selected features
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for selected features
+  knn.sel <- ipredknn(Class ~ Bare.Nuclei + Clump.Thickness + 
+                        Uniformity.of.Cell.Size,
+                        data=train.set, k=5)
+  pred.sel <- predict(knn.sel, test.set, type="class")
+  conf.matrix <- table(test.set$Class, pred.sel)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for simplified model (3 variables).', digits=c(0,4,5)), table.placement = 'H')
+
+@
+
+Very little variance means that there is no big difference in accuracy measures for different subset divisions.
+
+<<echo=F, eval=T, fig.height=5>>=
+knn.all <- ipredknn(Class ~ ., data=train_num, k=5)
+pred.all <- predict(knn.all, test_num, type="class")
+pred.all.prob <- predict(knn.all, test_num, type="prob") # note: we obtain proportion of the votes for the winning class, we convert it to P('1'|x)
+pred.all.prob[pred.all=="0"] <- 1 - pred.all.prob[pred.all=="0"]
+
+pred.ROCR.all <- prediction(pred.all.prob, test_num$Class)
+perf.ROCR.all <- performance(pred.ROCR.all, "tpr", "fpr")
+
+plot(perf.ROCR.all, colorize=FALSE, col='red', lwd=2)
+lines(c(0,1), c(0,1), lwd=3, lty=2, col='grey')
+title("ROC curve")
+
+knn.sel7 <- ipredknn(Class ~ . - Mitoses - Marginal.Adhesion,
+                      data=train_num, k=5)
+pred.sel7 <- predict(knn.sel7, test_num, type="class")
+pred.sel7.prob <- predict(knn.sel7, test_num, type="prob") # note: we obtain proportion of the votes for the winning class, we convert it to P('1'|x)
+pred.sel7.prob[pred.sel7=="0"] <- 1 - pred.sel7.prob[pred.sel7=="0"]
+
+pred.ROCR.sel7 <- prediction(pred.sel7.prob, test_num$Class)
+perf.ROCR.sel7 <- performance(pred.ROCR.sel7, "tpr", "fpr")
+
+knn.sel3 <- ipredknn(Class ~ Bare.Nuclei + Clump.Thickness + 
+                      Uniformity.of.Cell.Size,
+                      data=train_num, k=5)
+pred.sel3 <- predict(knn.sel3, test_num, type="class")
+pred.sel3.prob <- predict(knn.sel3, test_num, type="prob") # note: we obtain proportion of the votes for the winning class, we convert it to P('1'|x)
+pred.sel3.prob[pred.sel3=="0"] <- 1 - pred.sel3.prob[pred.sel3=="0"]
+
+pred.ROCR.sel3 <- prediction(pred.sel3.prob, test_num$Class)
+perf.ROCR.sel3 <- performance(pred.ROCR.sel3, "tpr", "fpr")
+
+plot(perf.ROCR.sel7, colorize=FALSE, col="green", add=T, lwd=2)
+plot(perf.ROCR.sel3, colorize=FALSE, col="blue", add=T, lwd=2)
+grid()
+legend("bottomright",lty=c(1,1,1,2), lwd=2, col=c("red","green","blue","grey"),
+       legend=c("full k-NN model", "7-variable k-NN model","3-variable k-NN model","random classifier"), 
+       bg="white", cex=0.7, bty = 'n')
+
+AUC.all <- performance(pred.ROCR.all, "auc")@y.values[[1]]
+AUC.sel7  <- performance(pred.ROCR.sel7, "auc")@y.values[[1]]
+AUC.sel3  <- performance(pred.ROCR.sel3, "auc")@y.values[[1]]
+@
+
+Excluding 2 variables almost did not affect the quality of prediction. Excluding 5 variables caused slight deterioration in accuracy, but the simplification is significant. For the future medical research simplification can prevent from overfitting and suggest the class membership basing on smaller number of measurments. In addition, area under ROC curve in all cases is really close to 1 and the difference between them is very small, so we are satisfied with our simplified $k$-NN models.
+
+
+\subsection{Logistic regression}
+
+Logistic regression was the second method which gave the best result in previous analysis. For one given training/testing subset division the full model ranks \texttt{Clump.Thickness} and \texttt{Bare.Nuclei} as the most important ones.
+
+<<echo=F, eval=T, results='asis'>>=
+logit.all <- glm(Class ~ ., data=train_num, family=binomial(link="logit"))
+print(xtable(summary(logit.all), caption = 'Summary of a full model constructed with glm function.'), table.placement="H")
+@
+
+Histograms of predicted posterior probabilities (for given training/testing subset division) for all three cases show that the algorithm is pretty sure about class assignment and manipulating cutoff level will not affect the result much. Thus we will keep the cutoff level 0.5.
+
+<<echo=F, eval=T, fig.height=4>>=
+pred.all.prob <- predict(logit.all, test_num, type = "response")
+logit.sel3 <- glm(Class ~ Bare.Nuclei + Clump.Thickness + 
+                 Uniformity.of.Cell.Size, 
+                 data=train_num, family=binomial(link="logit"))
+pred.sel3.prob <- predict(logit.sel3, test_num, type = "response")
+logit.sel7 <- glm(Class ~ . - Mitoses - Marginal.Adhesion, 
+                 data=train_num, family=binomial(link="logit"))
+pred.sel7.prob <- predict(logit.sel7, test_num, type = "response")
+
+par(mfrow=c(1,3))
+hist(pred.all.prob, freq = F, xlab='Posterior probability\nfor full model', cex.lab=0.8,
+     main='')
+hist(pred.sel7.prob, freq = F, xlab='Posterior probability\nfor simplified model (7 variables)', 
+     cex.lab=0.8, main='')
+hist(pred.sel3.prob, freq = F, xlab='Posterior probability\nfor simplified model (3 variables)', 
+     cex.lab=0.8, main='')
+mtext("Histograms of predicted posterior probability", side = 3, line = -2, outer = TRUE)
+@
+
+<<echo=F, eval=T, fig.height=5>>=
+#pred.all <- ifelse(pred.all.prob>0.5, 1, 0)
+
+pred.ROCR.all <- prediction(pred.all.prob, test_num$Class)
+perf.ROCR.all <- performance(pred.ROCR.all, "tpr", "fpr")
+
+pred.ROCR.sel7 <- prediction(pred.sel7.prob, test_num$Class)
+perf.ROCR.sel7 <- performance(pred.ROCR.sel7, "tpr", "fpr")
+
+pred.ROCR.sel3 <- prediction(pred.sel3.prob, test_num$Class)
+perf.ROCR.sel3 <- performance(pred.ROCR.sel3, "tpr", "fpr")
+
+plot(perf.ROCR.all, colorize=FALSE, col='red', lwd=2)
+lines(c(0,1), c(0,1), lwd=3, lty=2, col='grey')
+title("ROC curve")
+
+plot(perf.ROCR.sel7, colorize=FALSE, col="green", add=T, lwd=2)
+plot(perf.ROCR.sel3, colorize=FALSE, col="blue", add=T, lwd=2)
+grid()
+legend("bottomright",lty=c(1,1,1,2), lwd=2, col=c("red","green","blue","grey"),
+       legend=c("full LR model", "7-variable LR model", "3-variable LR model", "random classifier"), 
+       bg="white", cex=0.7, bty = 'n')
+
+@
+
+The ROC curves indicate very good performance of all models. At the end we will perform 5-fold cross validation to compare the average accuracy measurments.
+
+<<echo=F, eval=T, results = 'asis'>>=
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for all features
+  logit.all <- glm(Class ~ ., data=train.set, family=binomial(link="logit"))
+  pred.all.prob <- predict(logit.all, test.set, type = "response")
+  pred.all <- ifelse(pred.all.prob>0.5, 1, 0)
+  
+  conf.matrix <- table(test.set$Class, pred.all)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for full model.', digits=c(0,4,5)), table.placement = 'H')
+
+
+# for 7 selected features
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for selected features
+  logit.sel <- glm(Class ~ . - Mitoses - Marginal.Adhesion,
+                   data=train.set, family=binomial(link="logit"))
+  pred.sel.prob <- predict(logit.sel, test.set, type = "response")
+  pred.sel <- ifelse(pred.sel.prob>0.5, 1, 0)
+  
+  conf.matrix <- table(test.set$Class, pred.sel)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for simplified model (7 variables).', digits=c(0,4,5)), table.placement = 'H')
+
+
+# for 3 selected features
+misclass.error <- c()
+sensitivity <- c()
+specificity <- c()
+precision <- c()
+
+for (i in 1:k){
+  test.indx <- which(folds==i, arr.ind=TRUE)
+  test.set <- df_num[test.indx,]
+  train.set <- df_num[-test.indx,]
+  
+  # for selected features
+  logit.sel <- glm(Class ~ Bare.Nuclei + Clump.Thickness + 
+                        Uniformity.of.Cell.Size,
+                        data=train.set, family=binomial(link="logit"))
+  pred.sel.prob <- predict(logit.sel, test.set, type = "response")
+  pred.sel <- ifelse(pred.sel.prob>0.5, 1, 0)
+  
+  conf.matrix <- table(test.set$Class, pred.sel)
+  misclass.error[i] <- (nrow(test.set) - sum(diag(conf.matrix))) / nrow(test.set)
+  sensitivity[i] <- conf.matrix[2,2] / sum(conf.matrix[2,])
+  specificity[i] <- conf.matrix[1,1] / sum(conf.matrix[1,])
+  precision[i] <- conf.matrix[2,2] / sum(conf.matrix[,2])
+}
+
+names <- c('Misclassification error', 'Sensitivity', 'Specificity', 'Precision')
+Mean <- c(mean(misclass.error), mean(sensitivity), mean(specificity), mean(precision))
+Variance <- c(var(misclass.error), var(sensitivity), var(specificity), var(precision))
+accuracy.measures <- data.frame(Mean, Variance, row.names = names)
+
+print(xtable(accuracy.measures, caption = 'Accuracy measures for simplified model (3 variables).', digits=c(0,4,5)), table.placement = 'H')
+
+@
+
+The final conclusion about LR models is analogous to the one about $k$-NN models. The restriction to 3 independent variables enables to make the model more general not loosing much accuracy in the same time. \\
+\\
+In final comparison, the best classificator for Breast Cancer dataset turns out to be $k$-NN algorithm with $k=5$.
+
+\section{Conclusions and remarks}
+
+Most of the methods we discussed were applied to numerical data. We kept in mind that the values in our data frame were actually categorical, but that worked very well. Only classification tree and random forest worked directly on data of type factor. After the "first shot" classification, we chose $k$-NN algorithm and logistic regression for closer insight. Carrying out cross validation assured us about their good performance. We decided not to repeat feature selection in each iteration in favour of generalizing the importance for all measures and making model independent of training/testing subset division. It turned out that three variables are sufficient to predict the class of tumor with good accuracy. However, we should consider the purposes of the whole analysis and classification. If it is supposed to be used for only statistical purposes, having information about Bare Nuclei, Clump Thickness and Uniformity of Cell Size will give us satisfactory results. When it comes to patient's diagnosis, we should be as accurate as possible, so rather use full models or models excluding Mitoses and Marginal Adhesion, since our analysis proved their negligible importance. Giving less attention to type I and type II errors might result with strongly confusing diagnoses. 
+
+
+
+\newpage
+\section{Bibliography}
+\begin{thebibliography}{10}
+	\bibitem{cancer_data} \label{dataset}
+ 	Medical diagnostics: Breast Cancer Wisconsin (Original) Data Set\\
+ 	\path{http://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Original)}. \\
+ 	UCI, Machine Learning Repository, 1992.
+ 	\bibitem{fs1} H. Liu, H. Motoda, \textit{Computational Methods of Feature Selection} (2008)
+  \bibitem{fs2} Carolin Strobl (LMU Muenchen) and Achim Zeileis (WU Wien), \textit{Why and how to use random forest variable importance measures} (2008)
+  \bibitem{fs3} Yvan Saeys, Inaki Inza, Pedro Larranaga, \textit{A review of feature selection techniques in bioinformatics} (2007)
+  \bibitem{fs4} Feature Selection -- Ten Effective Techniques, \path{www.machinelearningplus.com} (2017)
+  \bibitem{fs5} Dr. Bharatendra Rai, \textit{Feature Selection using R} (2018)
+  \bibitem{clas} A. Zagdanski, Lecture materials for Data Mining course (2019)
+ 	
+\end{thebibliography}
+
+
+\end{document}
